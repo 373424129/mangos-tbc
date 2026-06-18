@@ -476,7 +476,10 @@ void WorldSession::HandleCancelAuraOpcode(WorldPacket& recvPacket)
     if (spellInfo->HasAttribute(SPELL_ATTR_NO_AURA_CANCEL))
         return;
 
-    if (spellInfo->HasAttribute(SPELL_ATTR_EX_NO_AURA_ICON) && !IsSpellHaveAura(spellInfo, SPELL_AURA_TRACK_RESOURCES))
+    // Tracking auras are client-cancelable even though they do not use a normal aura icon.
+    if (spellInfo->HasAttribute(SPELL_ATTR_EX_NO_AURA_ICON) &&
+        !IsSpellHaveAura(spellInfo, SPELL_AURA_TRACK_RESOURCES) &&
+        !IsSpellHaveAura(spellInfo, SPELL_AURA_TRACK_CREATURES))
         return;
 
     if (IsPassiveSpell(spellInfo))
