@@ -77,8 +77,31 @@ struct TameBeast : public SpellScript, public AuraScript
         Unit* target = spell->m_targets.getUnitTarget();
         if (!target)
             return SPELL_FAILED_BAD_IMPLICIT_TARGETS;
-        if (target->GetLevel() > spell->GetCaster()->GetLevel())
+
+        if (!target->IsCreature())
+            return SPELL_FAILED_BAD_TARGETS;
+
+        Player* caster = dynamic_cast<Player*>(spell->GetCaster());
+        if (!caster)
+            return SPELL_FAILED_BAD_TARGETS;
+
+        Creature* creatureTarget = static_cast<Creature*>(target);
+
+        if (creatureTarget->IsPet() || creatureTarget->HasCharmer())
+        {
+            caster->SendPetTameFailure(PETTAME_CREATUREALREADYOWNED);
+            return SPELL_FAILED_DONT_REPORT;
+        }
+
+        if (creatureTarget->GetLevel() > caster->GetLevel())
             return SPELL_FAILED_HIGHLEVEL;
+
+        if (!creatureTarget->GetCreatureInfo()->isTameable())
+        {
+            caster->SendPetTameFailure(PETTAME_NOTTAMEABLE);
+            return SPELL_FAILED_DONT_REPORT;
+        }
+
         return SPELL_CAST_OK;
     }
 

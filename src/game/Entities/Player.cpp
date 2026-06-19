@@ -21557,11 +21557,7 @@ void Player::UnsummonPetTemporaryIfAny()
         return;
 
     if (!m_temporaryUnsummonedPetNumber && pet->isControlled() && !pet->isTemporarySummoned() && pet->IsAlive())
-    {
         m_temporaryUnsummonedPetNumber = pet->GetCharmInfo()->GetPetNumber();
-        DEBUG_LOG("Player::UnsummonPetTemporaryIfAny: player '%s' (%u) caching temporary pet %u.",
-            GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber);
-    }
 
     pet->Unsummon(PET_SAVE_AS_CURRENT, this);
 }
@@ -21682,8 +21678,6 @@ bool Player::NormalizeHunterPetState(bool clearInvalidTrainingPets /*= true*/)
 
     if (shouldNormalizeSlots)
     {
-        DEBUG_LOG("Player::NormalizeHunterPetState: player '%s' (%u) normalizing hunter pet slots, preferred pet %u, active count %u, hasCurrentSlot %u, hasDismissedSlot %u.",
-            GetName(), GetGUIDLow(), preferredPetId, uint32(activePetIds.size()), hasCurrentSlot ? 1 : 0, hasDismissedSlot ? 1 : 0);
         CharacterDatabase.BeginTransaction();
         CharacterDatabase.PExecute("UPDATE character_pet SET slot = '%u' WHERE owner = '%u' AND id = '%u'",
             uint32(PET_SAVE_AS_CURRENT), GetGUIDLow(), preferredPetId);
@@ -21701,8 +21695,6 @@ bool Player::NormalizeHunterPetState(bool clearInvalidTrainingPets /*= true*/)
         }
         else
         {
-            DEBUG_LOG("Player::NormalizeHunterPetState: player '%s' (%u) clearing mismatched temporary pet %u, preferred pet %u, active count %u.",
-                GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber, preferredPetId, uint32(activePetIds.size()));
             m_temporaryUnsummonedPetNumber = 0;
             changed = true;
         }
@@ -21725,13 +21717,9 @@ bool Player::TryResummonStoredHunterPet(bool preferTemporaryPet /*= true*/)
     {
         newPet = new Pet;
         spawnPos = newPet->GetPetSpawnPosition(this);
-        DEBUG_LOG("Player::TryResummonStoredHunterPet: player '%s' (%u) trying temporary pet %u.",
-            GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber);
 
         if (!newPet->LoadPetFromDB(this, spawnPos, 0, m_temporaryUnsummonedPetNumber, true))
         {
-            DEBUG_LOG("Player::TryResummonStoredHunterPet: player '%s' (%u) failed to load temporary pet %u, falling back to stored pet search.",
-                GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber);
             delete newPet;
             newPet = nullptr;
             m_temporaryUnsummonedPetNumber = 0;
@@ -21798,12 +21786,9 @@ void Player::ResummonPetTemporaryUnSummonedIfAny()
         return;
 
     uint32 petNumber = m_temporaryUnsummonedPetNumber;
-    DEBUG_LOG("Player::ResummonPetTemporaryUnSummonedIfAny: player '%s' (%u) attempting to restore temporary pet %u.",
-        GetName(), GetGUIDLow(), petNumber);
     bool loaded = TryResummonStoredHunterPet(true);
-    if (!loaded)
-        DEBUG_LOG("Player::ResummonPetTemporaryUnSummonedIfAny: player '%s' (%u) failed to restore temporary pet %u.",
-            GetName(), GetGUIDLow(), petNumber);
+    (void)petNumber;
+    (void)loaded;
     m_temporaryUnsummonedPetNumber = 0;
 }
 

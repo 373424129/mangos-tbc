@@ -4943,10 +4943,6 @@ void Spell::EffectTameCreature(SpellEffectIndex /*eff_idx*/)
     // caster have pet now
     plr->SetPet(pet);
 
-    sLog.outString("Spell::EffectTameCreature: player '%s' (%u) created hunter pet guidLow %u petNumber %u entry %u createdBySpell %u controlled %u ownerPetGuidLow %u.",
-        plr->GetName(), plr->GetGUIDLow(), pet->GetGUIDLow(), pet->GetCharmInfo() ? pet->GetCharmInfo()->GetPetNumber() : 0,
-        pet->GetEntry(), pet->GetCreatedBySpellId(), pet->isControlled() ? 1 : 0, plr->GetPetGuid().GetCounter());
-
     plr->PetSpellInitialize();
     pet->SetLoading(false);
 
@@ -7280,9 +7276,6 @@ void Spell::EffectDismissPet(SpellEffectIndex /*eff_idx*/)
     if (Player* player = static_cast<Player*>(m_caster))
     {
         uint32 petNumber = pet->GetCharmInfo() ? pet->GetCharmInfo()->GetPetNumber() : 0;
-        sLog.outString("Spell::EffectDismissPet: player '%s' (%u) dismissing pet guidLow %u petNumber %u entry %u createdBySpell %u controlled %u ownerPetGuidLow %u temporary pet before dismiss %u.",
-            player->GetName(), player->GetGUIDLow(), pet->GetGUIDLow(), petNumber, pet->GetEntry(), pet->GetCreatedBySpellId(),
-            pet->isControlled() ? 1 : 0, player->GetPetGuid().GetCounter(), player->GetTemporaryUnsummonedPetNumber());
         if (petNumber && player->GetTemporaryUnsummonedPetNumber() == petNumber)
             player->SetTemporaryUnsummonedPetNumber(0);
     }
