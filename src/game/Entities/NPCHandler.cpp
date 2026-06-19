@@ -30,6 +30,8 @@
 #include "DBScripts/ScriptMgr.h"
 #include "Entities/Creature.h"
 #include "Entities/Pet.h"
+#include "Spells/Spell.h"
+#include "Spells/SpellEffectDefines.h"
 #include "Guilds/Guild.h"
 #include "Guilds/GuildMgr.h"
 #include "Chat/Chat.h"
@@ -42,6 +44,93 @@ enum StableResultCode
     STABLE_SUCCESS_UNSTABLE = 0x09,                         // unstable/swap success
     STABLE_SUCCESS_BUY_SLOT = 0x0A,                         // buy slot success
 };
+
+namespace
+{
+bool IsTriggeredSpellEffect(SpellEntry const* spellInfo, int effectIndex)
+{
+    if (!spellInfo)
+        return false;
+
+    switch (spellInfo->Effect[effectIndex])
+    {
+        case SPELL_EFFECT_TRIGGER_MISSILE:
+        case SPELL_EFFECT_TRIGGER_SPELL:
+        case SPELL_EFFECT_TRIGGER_SPELL_WITH_VALUE:
+        case SPELL_EFFECT_TRIGGER_SPELL_2:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool FindPetTrainerLearnSpell(uint32 spellId, uint32& learnedPetSpellId, std::set<uint32>& visitedSpellIds)
+{
+    if (!spellId || !visitedSpellIds.insert(spellId).second)
+        return false;
+
+    SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spellId);
+    if (!spellInfo)
+        return false;
+
+    for (int i = 0; i < MAX_EFFECT_INDEX; ++i)
+    {
+        uint32 triggeredSpellId = spellInfo->EffectTriggerSpell[i];
+        if (!triggeredSpellId)
+            continue;
+
+        if (spellInfo->Effect[i] == SPELL_EFFECT_LEARN_PET_SPELL)
+        {
+            learnedPetSpellId = triggeredSpellId;
+            return true;
+        }
+
+        if (spellInfo->Effect[i] == SPELL_EFFECT_LEARN_SPELL)
+        {
+            learnedPetSpellId = triggeredSpellId;
+            return true;
+        }
+
+        if (IsTriggeredSpellEffect(spellInfo, i))
+        {
+            if (FindPetTrainerLearnSpell(triggeredSpellId, learnedPetSpellId, visitedSpellIds))
+                return true;
+        }
+    }
+
+    return false;
+}
+
+SpellCastResult ValidatePetTrainerSpell(Player* player, TrainerSpell const* trainerSpell)
+{
+    if (!trainerSpell)
+        return SPELL_CAST_OK;
+
+    uint32 learnedPetSpellId = 0;
+    std::set<uint32> visitedSpellIds;
+    if (!FindPetTrainerLearnSpell(trainerSpell->spell, learnedPetSpellId, visitedSpellIds))
+        return SPELL_CAST_OK;
+
+    Pet* pet = player->GetPet();
+    if (!pet || !pet->IsAlive())
+        return SPELL_FAILED_NO_PET;
+
+    SpellEntry const* learnSpellInfo = sSpellTemplate.LookupEntry<SpellEntry>(learnedPetSpellId);
+    if (!learnSpellInfo)
+        return SPELL_FAILED_NOT_KNOWN;
+
+    if (!pet->CanTakeMoreActiveSpells(learnedPetSpellId))
+        return SPELL_FAILED_TOO_MANY_SKILLS;
+
+    if (learnSpellInfo->spellLevel > pet->GetLevel())
+        return SPELL_FAILED_LOWLEVEL;
+
+    if (!pet->HasTPForSpell(learnedPetSpellId))
+        return SPELL_FAILED_TRAINING_POINTS;
+
+    return SPELL_CAST_OK;
+}
+}
 
 void WorldSession::HandleTabardVendorActivateOpcode(WorldPacket& recv_data)
 {
@@ -275,6 +364,13 @@ void WorldSession::HandleTrainerBuySpellOpcode(WorldPacket& recv_data)
     reqLevel = trainer_spell->isProvidedReqLevel ? trainer_spell->reqLevel : std::max(reqLevel, trainer_spell->reqLevel);
     if (_player->GetTrainerSpellState(trainer_spell, reqLevel) != TRAINER_SPELL_GREEN)
         return;
+
+    SpellCastResult petTrainerResult = ValidatePetTrainerSpell(_player, trainer_spell);
+    if (petTrainerResult != SPELL_CAST_OK)
+    {
+        Spell::SendCastResult(_player, sSpellTemplate.LookupEntry<SpellEntry>(trainer_spell->spell), 1, petTrainerResult);
+        return;
+    }
 
     // apply reputation discount
     uint32 nSpellCost = uint32(floor(trainer_spell->spellCost * _player->GetReputationPriceDiscount(unit)));
