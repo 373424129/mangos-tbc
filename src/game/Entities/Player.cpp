@@ -19749,6 +19749,79 @@ void Player::learnDefaultSpells()
     }
 }
 
+namespace
+{
+    bool IsQuestRewardSpellSafeToReplay(SpellEntry const* spellInfo, Player const* player, bool* hasUnknownLearnSpell = nullptr)
+    {
+        if (!spellInfo || !player)
+            return false;
+
+        bool hasUnknownLearnSpellLocal = false;
+
+        for (int i = 0; i < MAX_EFFECT_INDEX; ++i)
+        {
+            uint32 effect = spellInfo->Effect[i];
+            if (!effect)
+                continue;
+
+            switch (effect)
+            {
+                case SPELL_EFFECT_LEARN_SPELL:
+                {
+                    uint32 learnedSpellId = spellInfo->EffectTriggerSpell[i];
+                    if (!learnedSpellId)
+                        return false;
+
+                    if (!player->HasSpell(learnedSpellId))
+                        hasUnknownLearnSpellLocal = true;
+                    break;
+                }
+                case SPELL_EFFECT_LEARN_PET_SPELL:
+                    return false;
+                case SPELL_EFFECT_SUMMON:
+                case SPELL_EFFECT_41:
+                case SPELL_EFFECT_42:
+                case SPELL_EFFECT_TAMECREATURE:
+                case SPELL_EFFECT_SUMMON_PET:
+                case SPELL_EFFECT_73:
+                case SPELL_EFFECT_74:
+                case SPELL_EFFECT_SUMMON_OBJECT_WILD:
+                case SPELL_EFFECT_SUMMON_PLAYER:
+                case SPELL_EFFECT_87:
+                case SPELL_EFFECT_88:
+                case SPELL_EFFECT_89:
+                case SPELL_EFFECT_90:
+                case SPELL_EFFECT_97:
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT1:
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT2:
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT3:
+                case SPELL_EFFECT_SUMMON_OBJECT_SLOT4:
+                case SPELL_EFFECT_SUMMON_DEAD_PET:
+                case SPELL_EFFECT_CALL_PET:
+                case SPELL_EFFECT_SUMMON_RAF_FRIEND:
+                case SPELL_EFFECT_CREATE_PET:
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        if (hasUnknownLearnSpell)
+            *hasUnknownLearnSpell = hasUnknownLearnSpellLocal;
+
+        if (!hasUnknownLearnSpellLocal)
+            return false;
+
+        // Prevent learning profession specializations, because unlearning and re-learning a profession
+        // doesn't automatically re-add the specialization.
+        uint32 learned_0 = spellInfo->EffectTriggerSpell[EFFECT_INDEX_0];
+        if (sSpellMgr.GetSpellRank(learned_0) > 1)
+            return false;
+
+        return true;
+    }
+}
+
 void Player::learnQuestRewardedSpells(Quest const* quest)
 {
     uint32 spell_id = quest->GetRewSpellCast();
@@ -19761,25 +19834,17 @@ void Player::learnQuestRewardedSpells(Quest const* quest)
     if (!spellInfo)
         return;
 
-    // check learned spells state
-    bool found = false;
-    for (int i = 0; i < MAX_EFFECT_INDEX; ++i)
+    bool hasUnknownLearnSpell = false;
+
+    // Only replay pure teaching spells. Quest reward spells with summon/tame/task-side effects
+    // are valid on first completion, but unsafe to re-cast later during login/level sync.
+    if (!IsQuestRewardSpellSafeToReplay(spellInfo, this, &hasUnknownLearnSpell))
     {
-        if (spellInfo->Effect[i] == SPELL_EFFECT_LEARN_SPELL && !HasSpell(spellInfo->EffectTriggerSpell[i]))
-        {
-            found = true;
-            break;
-        }
+        if (hasUnknownLearnSpell)
+            sLog.outDebug("Skipping unsafe quest reward spell replay for player '%s': quest %u ('%s') spell %u.",
+                GetName(), quest->GetQuestId(), quest->GetTitle().c_str(), spell_id);
+        return;
     }
-
-    // skip quests with not teaching spell or already known spell
-    if (!found)
-        return;
-
-    // Prevent learning profession specializations, because unlearning and re-learning a profession doesn't automatically re-add the specialization
-    uint32 learned_0 = spellInfo->EffectTriggerSpell[EFFECT_INDEX_0];
-    if (sSpellMgr.GetSpellRank(learned_0) > 1)
-        return;
 
     CastSpell(this, spell_id, TRIGGERED_OLD_TRIGGERED);
 }

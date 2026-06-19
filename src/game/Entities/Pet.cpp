@@ -153,6 +153,27 @@ SpellCastResult Pet::TryLoadFromDB(Unit* owner, uint32 petentry /*= 0*/, uint32 
 
 bool Pet::LoadPetFromDB(Player* owner, Position const& spawnPos, uint32 petentry /*= 0*/, uint32 petnumber /*= 0*/, bool current /*= false*/, uint32 healthPercentage /*= 0*/, bool permanentOnly /*= false*/, bool forced /*= false*/)
 {
+    auto isTrainingTameSpell = [](uint32 spellId) -> bool
+    {
+        switch (spellId)
+        {
+            case 13481: // Tame Beast triggered effect used by hunter training chain
+            case 19597: // Tame Ice Claw Bear
+            case 19676: // Tame Snow Leopard
+            case 19678: // Tame Adult Plainstrider
+            case 19679: // Tame Prairie Stalker
+            case 19680: // Tame Swoop
+            case 19681: // Tame Dire Mottled Boar
+            case 19682: // Tame Surf Crawler
+            case 19684: // Tame Webwood Lurker
+            case 19685: // Tame Nightsaber Stalker
+            case 19686: // Tame Strigid Screecher
+                return true;
+            default:
+                return false;
+        }
+    };
+
     m_loading = true;
 
     uint32 ownerid = owner->GetGUIDLow();
@@ -210,6 +231,13 @@ bool Pet::LoadPetFromDB(Player* owner, Position const& spawnPos, uint32 petentry
     }
 
     PetType pet_type = PetType(fields[22].GetUInt8());
+    if (pet_type == HUNTER_PET && isTrainingTameSpell(summon_spell_id))
+    {
+        sLog.outError("Refusing to load invalid hunter training pet id %u entry %u owner %s createdBySpell %u.",
+            fields[0].GetUInt32(), petentry, owner->GetGuidStr().c_str(), summon_spell_id);
+        return false;
+    }
+
     if (pet_type == HUNTER_PET)
     {
         if (!creatureInfo->isTameable())

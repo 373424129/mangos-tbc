@@ -264,6 +264,17 @@ void PetAI::UpdateAI(const uint32 diff)
 std::vector<std::tuple<SpellEntry const*, Unit*, bool>> PetAI::PickSpellWithTarget(Unit* owner, Unit* victim, CharmInfo* charmInfo)
 {
     std::vector<std::tuple<SpellEntry const*, Unit*, bool>> nonblockingSpells;
+
+    if (!owner || !charmInfo || !m_creature)
+        return nonblockingSpells;
+
+    if (m_pet && m_pet->getPetType() != HUNTER_PET && !m_creature->GetCreatureInfo())
+    {
+        sLog.outError("PetAI::PickSpellWithTarget: pet guid %u entry %u createdBySpell %u has no CreatureInfo, skipping AI update.",
+            m_creature->GetGUIDLow(), m_creature->GetEntry(), m_creature->GetCreatedBySpellId());
+        return nonblockingSpells;
+    }
+
     // Cast an opener spell, if stored
     if (charmInfo->GetSpellOpener() != 0)
     {
@@ -290,6 +301,13 @@ std::vector<std::tuple<SpellEntry const*, Unit*, bool>> PetAI::PickSpellWithTarg
             nonblockingSpells.emplace_back(spellInfo, victim, true);
             return nonblockingSpells;
         }
+    }
+
+    if (!m_pet)
+    {
+        sLog.outError("PetAI::PickSpellWithTarget: creature guid %u entry %u createdBySpell %u has PetAI without Pet instance, skipping AI update.",
+            m_creature->GetGUIDLow(), m_creature->GetEntry(), m_creature->GetCreatedBySpellId());
+        return nonblockingSpells;
     }
 
     uint32 creatureEntry = m_pet->getPetType() == HUNTER_PET ? 1 : m_creature->GetCreatureInfo()->Entry;

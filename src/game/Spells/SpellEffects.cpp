@@ -4845,6 +4845,26 @@ void Spell::EffectEnchantItemTmp(SpellEffectIndex eff_idx)
 
 void Spell::EffectTameCreature(SpellEffectIndex /*eff_idx*/)
 {
+    auto isTrainingTameSpell = [](uint32 spellId) -> bool
+    {
+        switch (spellId)
+        {
+            case 19597: // Tame Ice Claw Bear
+            case 19676: // Tame Snow Leopard
+            case 19678: // Tame Adult Plainstrider
+            case 19679: // Tame Prairie Stalker
+            case 19680: // Tame Swoop
+            case 19681: // Tame Dire Mottled Boar
+            case 19682: // Tame Surf Crawler
+            case 19684: // Tame Webwood Lurker
+            case 19685: // Tame Nightsaber Stalker
+            case 19686: // Tame Strigid Screecher
+                return true;
+            default:
+                return false;
+        }
+    };
+
     // Caster must be player, checked in Spell::CheckCast
     // Spell can be triggered, we need to check original caster prior to caster
     Player* plr = static_cast<Player*>(GetAffectiveCaster());
@@ -4927,6 +4947,13 @@ void Spell::EffectTameCreature(SpellEffectIndex /*eff_idx*/)
 
     plr->PetSpellInitialize();
     pet->SetLoading(false);
+
+    if (isTrainingTameSpell(m_spellInfo->Id) || pet->GetCreatedBySpellId() == 13481)
+    {
+        sLog.outDebug("Skipping hunter pet persistence for training tame spell %u, player '%s', pet entry %u.",
+            m_spellInfo->Id, plr->GetName(), pet->GetEntry());
+        return;
+    }
 
     pet->SavePetToDB(PET_SAVE_AS_CURRENT, plr);
 }
