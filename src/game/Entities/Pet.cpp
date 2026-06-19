@@ -157,7 +157,6 @@ bool Pet::LoadPetFromDB(Player* owner, Position const& spawnPos, uint32 petentry
     {
         switch (spellId)
         {
-            case 13481: // Tame Beast triggered effect used by hunter training chain
             case 19597: // Tame Ice Claw Bear
             case 19676: // Tame Snow Leopard
             case 19678: // Tame Adult Plainstrider
@@ -235,6 +234,7 @@ bool Pet::LoadPetFromDB(Player* owner, Position const& spawnPos, uint32 petentry
     {
         sLog.outError("Refusing to load invalid hunter training pet id %u entry %u owner %s createdBySpell %u.",
             fields[0].GetUInt32(), petentry, owner->GetGuidStr().c_str(), summon_spell_id);
+        DeleteFromDB(fields[0].GetUInt32());
         return false;
     }
 
@@ -444,16 +444,70 @@ bool Pet::LoadPetFromDB(Player* owner, Position const& spawnPos, uint32 petentry
 
 void Pet::SavePetToDB(PetSaveMode mode, Player* owner)
 {
+    auto isTrainingTameSpell = [](uint32 spellId) -> bool
+    {
+        switch (spellId)
+        {
+            case 19597:
+            case 19676:
+            case 19678:
+            case 19679:
+            case 19680:
+            case 19681:
+            case 19682:
+            case 19684:
+            case 19685:
+            case 19686:
+                return true;
+            default:
+                return false;
+        }
+    };
+
+    sLog.outString("Pet::SavePetToDB: begin owner '%s' (%u) petGuidLow %u petNumber %u entry %u createdBySpell %u petType %u mode %u controlled %u ownerPetGuidLow %u tempPet %u alive %u removed %u.",
+        owner ? owner->GetName() : "<null>",
+        owner ? owner->GetGUIDLow() : 0,
+        GetGUIDLow(),
+        m_charmInfo ? m_charmInfo->GetPetNumber() : 0,
+        GetEntry(),
+        GetUInt32Value(UNIT_CREATED_BY_SPELL),
+        uint32(getPetType()),
+        uint32(mode),
+        isControlled() ? 1 : 0,
+        owner ? owner->GetPetGuid().GetCounter() : 0,
+        owner ? owner->GetTemporaryUnsummonedPetNumber() : 0,
+        IsAlive() ? 1 : 0,
+        m_removed ? 1 : 0);
+
     if (!GetEntry())
+    {
+        sLog.outString("Pet::SavePetToDB: abort because pet entry is 0 for owner '%s' (%u), petGuidLow %u petNumber %u.",
+            owner ? owner->GetName() : "<null>", owner ? owner->GetGUIDLow() : 0, GetGUIDLow(), m_charmInfo ? m_charmInfo->GetPetNumber() : 0);
         return;
+    }
 
     // save only fully controlled creature
     if (!isControlled())
+    {
+        sLog.outString("Pet::SavePetToDB: abort because pet is not controlled for owner '%s' (%u), petGuidLow %u petNumber %u entry %u.",
+            owner ? owner->GetName() : "<null>", owner ? owner->GetGUIDLow() : 0, GetGUIDLow(), m_charmInfo ? m_charmInfo->GetPetNumber() : 0, GetEntry());
         return;
+    }
+
+    if (getPetType() == HUNTER_PET && isTrainingTameSpell(GetUInt32Value(UNIT_CREATED_BY_SPELL)))
+    {
+        sLog.outString("Pet::SavePetToDB: skipping invalid hunter training pet %u entry %u for player '%s' (%u), spell %u.",
+            m_charmInfo ? m_charmInfo->GetPetNumber() : 0, GetEntry(), owner->GetName(), owner->GetGUIDLow(), GetUInt32Value(UNIT_CREATED_BY_SPELL));
+        return;
+    }
 
     // dont save shadowfiend
     if (owner->getClass() == CLASS_PRIEST)
+    {
+        sLog.outString("Pet::SavePetToDB: abort because owner '%s' (%u) is priest, petGuidLow %u petNumber %u entry %u.",
+            owner->GetName(), owner->GetGUIDLow(), GetGUIDLow(), m_charmInfo ? m_charmInfo->GetPetNumber() : 0, GetEntry());
         return;
+    }
 
     // current/stable/not_in_slot
     if (mode >= PET_SAVE_AS_CURRENT)
@@ -467,7 +521,11 @@ void Pet::SavePetToDB(PetSaveMode mode, Player* owner)
         {
             // pet will lost anyway at restore temporary unsummoned
             if (getPetType() == HUNTER_PET)
+            {
+                sLog.outString("Pet::SavePetToDB: abort because hunter pet %u entry %u would conflict with temporary pet %u for owner '%s' (%u).",
+                    m_charmInfo ? m_charmInfo->GetPetNumber() : 0, GetEntry(), owner->GetTemporaryUnsummonedPetNumber(), owner->GetName(), owner->GetGUIDLow());
                 return;
+            }
 
             // for warlock case
             mode = PET_SAVE_NOT_IN_SLOT;
@@ -577,11 +635,20 @@ void Pet::SavePetToDB(PetSaveMode mode, Player* owner)
         else
             savePet.addUInt32(0);
 
+        sLog.outString("Pet::SavePetToDB: committing owner '%s' (%u) petNumber %u entry %u slot %u createdBySpell %u loyalty %u curhealth %u curpower %u.",
+            owner->GetName(), owner->GetGUIDLow(), m_charmInfo ? m_charmInfo->GetPetNumber() : 0, GetEntry(), uint32(mode),
+            GetUInt32Value(UNIT_CREATED_BY_SPELL), loyalty, curhealth, curpower);
+
         savePet.Execute();
         CharacterDatabase.CommitTransaction();
+
+        sLog.outString("Pet::SavePetToDB: committed owner '%s' (%u) petNumber %u entry %u slot %u.",
+            owner->GetName(), owner->GetGUIDLow(), m_charmInfo ? m_charmInfo->GetPetNumber() : 0, GetEntry(), uint32(mode));
     }
     else
     {
+        sLog.outString("Pet::SavePetToDB: deleting petNumber %u entry %u for owner '%s' (%u) because mode %u requests delete.",
+            m_charmInfo ? m_charmInfo->GetPetNumber() : 0, GetEntry(), owner ? owner->GetName() : "<null>", owner ? owner->GetGUIDLow() : 0, uint32(mode));
         RemoveAllAuras(AURA_REMOVE_BY_DELETE);
         DeleteFromDB(m_charmInfo->GetPetNumber());
     }
@@ -1061,8 +1128,19 @@ void Pet::Unsummon(PetSaveMode mode, Unit* owner /*= nullptr*/)
     {
         Player* p_owner = nullptr;
 
+        sLog.outString("Pet::Unsummon: begin ownerGuidLow %u ownerType %u petGuidLow %u petNumber %u entry %u createdBySpell %u petType %u mode %u controlled %u ownerPetGuidLow %u tempPet %u alive %u.",
+            owner->GetGUIDLow(), owner->GetTypeId(), GetGUIDLow(), GetCharmInfo() ? GetCharmInfo()->GetPetNumber() : 0, GetEntry(),
+            GetUInt32Value(UNIT_CREATED_BY_SPELL), uint32(getPetType()), uint32(mode), isControlled() ? 1 : 0,
+            owner->GetPetGuid().GetCounter(),
+            (owner->GetTypeId() == TYPEID_PLAYER ? static_cast<Player*>(owner)->GetTemporaryUnsummonedPetNumber() : 0),
+            IsAlive() ? 1 : 0);
+
         if (GetOwnerGuid() != owner->GetObjectGuid())
+        {
+            sLog.outString("Pet::Unsummon: abort because pet owner guid %u does not match provided owner guid %u for petGuidLow %u petNumber %u entry %u.",
+                GetOwnerGuid().GetCounter(), owner->GetGUIDLow(), GetGUIDLow(), GetCharmInfo() ? GetCharmInfo()->GetPetNumber() : 0, GetEntry());
             return;
+        }
 
         if (owner->GetTypeId() == TYPEID_PLAYER)
         {
@@ -1116,7 +1194,11 @@ void Pet::Unsummon(PetSaveMode mode, Unit* owner /*= nullptr*/)
         if (p_owner)
             StartCooldown(p_owner);
 
-        // only if current pet in slot
+        if (p_owner)
+            SavePetToDB(mode, p_owner);
+
+        // Save first, then clear active references so dismiss/temporary unsummon
+        // cannot be reinterpreted as a lost pet and deleted mid-remove.
         switch (getPetType())
         {
             case MINI_PET:
@@ -1131,10 +1213,10 @@ void Pet::Unsummon(PetSaveMode mode, Unit* owner /*= nullptr*/)
                     owner->SetPet(nullptr);
                 break;
         }
-
-        if (p_owner)
-            SavePetToDB(mode, p_owner);
     }
+
+    sLog.outString("Pet::Unsummon: remove queue ownerGuidLow %u petGuidLow %u petNumber %u entry %u mode %u.",
+        owner ? owner->GetGUIDLow() : 0, GetGUIDLow(), GetCharmInfo() ? GetCharmInfo()->GetPetNumber() : 0, GetEntry(), uint32(mode));
 
     AddObjectToRemoveList();
     m_removed = true;
@@ -1212,6 +1294,8 @@ bool Pet::CreateBaseAtCreature(Creature* creature)
     uint32 pet_number = sObjectMgr.GeneratePetNumber();
     if (!Create(guid, pos, creature->GetCreatureInfo(), pet_number))
         return false;
+
+    m_charmInfo->SetPetNumber(pet_number, isControlled());
 
     CreatureInfo const* cInfo = GetCreatureInfo();
     if (!cInfo)

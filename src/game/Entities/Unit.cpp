@@ -12160,6 +12160,13 @@ void Unit::Uncharm(Unit* charmed, uint32 spellId)
 
             // we have to restore initial MotionMaster
             charmed->GetMotionMaster()->UnMarkFollowMovegens();
+
+            // Charmed creatures temporarily run PetAI; rebuild their native AI on uncharm.
+            charmedCreature->AIM_Initialize();
+
+            DEBUG_FILTER_LOG(LOG_FILTER_AI_AND_MOVEGENSS,
+                "Unit::Uncharm rebuilt AI for creature guid %u entry %u after charm removal.",
+                charmedCreature->GetGUIDLow(), charmedCreature->GetEntry());
         }
         else
         {

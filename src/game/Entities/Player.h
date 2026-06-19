@@ -2142,6 +2142,8 @@ class Player : public Unit
         void UnsummonPetTemporaryIfAny();
         void UnsummonPetIfAny();
         void ResummonPetTemporaryUnSummonedIfAny();
+        bool NormalizeHunterPetState(bool clearInvalidTrainingPets = true);
+        bool TryResummonStoredHunterPet(bool preferTemporaryPet = true);
         bool IsPetNeedBeTemporaryUnsummoned(Pet* pet) const;
         uint32 GetBGPetSpell() const { return m_BGPetSpell; }
         void SetBGPetSpell(uint32 petSpell) { m_BGPetSpell = petSpell; }

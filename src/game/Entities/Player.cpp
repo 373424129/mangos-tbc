@@ -16015,6 +16015,8 @@ void Player::_LoadMails(std::unique_ptr<QueryResult> queryResult)
 
 void Player::LoadPet()
 {
+    NormalizeHunterPetState();
+
     // fixme: the pet should still be loaded if the player is not in world
     // just not added to the map
     if (IsInWorld())
@@ -21555,7 +21557,11 @@ void Player::UnsummonPetTemporaryIfAny()
         return;
 
     if (!m_temporaryUnsummonedPetNumber && pet->isControlled() && !pet->isTemporarySummoned() && pet->IsAlive())
+    {
         m_temporaryUnsummonedPetNumber = pet->GetCharmInfo()->GetPetNumber();
+        DEBUG_LOG("Player::UnsummonPetTemporaryIfAny: player '%s' (%u) caching temporary pet %u.",
+            GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber);
+    }
 
     pet->Unsummon(PET_SAVE_AS_CURRENT, this);
 }
@@ -21567,6 +21573,183 @@ void Player::UnsummonPetIfAny()
         return;
 
     pet->Unsummon(PET_SAVE_NOT_IN_SLOT, this);
+}
+
+bool Player::NormalizeHunterPetState(bool clearInvalidTrainingPets /*= true*/)
+{
+    if (getClass() != CLASS_HUNTER)
+        return false;
+
+    auto isTrainingTameSpell = [](uint32 spellId) -> bool
+    {
+        switch (spellId)
+        {
+            case 13481:
+            case 19597:
+            case 19676:
+            case 19678:
+            case 19679:
+            case 19680:
+            case 19681:
+            case 19682:
+            case 19684:
+            case 19685:
+            case 19686:
+                return true;
+            default:
+                return false;
+        }
+    };
+
+    std::unique_ptr<QueryResult> queryResult(CharacterDatabase.PQuery(
+        "SELECT id, slot, CreatedBySpell, PetType "
+        "FROM character_pet WHERE owner = '%u' "
+        "AND (PetType <> '%u' OR CreatedBySpell NOT IN (13481, 19597, 19676, 19678, 19679, 19680, 19681, 19682, 19684, 19685, 19686)) "
+        "ORDER BY slot, id",
+        GetGUIDLow(), uint32(HUNTER_PET)));
+
+    if (!queryResult)
+        return false;
+
+    std::vector<uint32> invalidTrainingPets;
+    std::vector<uint32> activePetIds;
+    uint32 preferredPetId = 0;
+    bool hasCurrentSlot = false;
+    bool hasDismissedSlot = false;
+
+    do
+    {
+        Field* fields = queryResult->Fetch();
+        uint32 petId = fields[0].GetUInt32();
+        uint32 slot = fields[1].GetUInt32();
+        uint32 createdBySpell = fields[2].GetUInt32();
+        PetType petType = PetType(fields[3].GetUInt8());
+
+        if (petType != HUNTER_PET)
+            continue;
+
+        if (clearInvalidTrainingPets && isTrainingTameSpell(createdBySpell))
+        {
+            invalidTrainingPets.push_back(petId);
+            continue;
+        }
+
+        if (slot == uint32(PET_SAVE_AS_CURRENT) || slot > uint32(PET_SAVE_LAST_STABLE_SLOT))
+        {
+            activePetIds.push_back(petId);
+            if (!preferredPetId || slot == uint32(PET_SAVE_AS_CURRENT))
+                preferredPetId = petId;
+            if (slot == uint32(PET_SAVE_AS_CURRENT))
+                hasCurrentSlot = true;
+            if (slot == uint32(PET_SAVE_NOT_IN_SLOT))
+                hasDismissedSlot = true;
+        }
+    } while (queryResult->NextRow());
+
+    bool changed = false;
+
+    if (!invalidTrainingPets.empty())
+    {
+        CharacterDatabase.BeginTransaction();
+        for (uint32 petId : invalidTrainingPets)
+        {
+            CharacterDatabase.PExecute("DELETE FROM character_pet WHERE owner = '%u' AND id = '%u'", GetGUIDLow(), petId);
+            CharacterDatabase.PExecute("DELETE FROM character_pet_declinedname WHERE owner = '%u' AND id = '%u'", GetGUIDLow(), petId);
+            CharacterDatabase.PExecute("DELETE FROM pet_aura WHERE guid = '%u'", petId);
+            CharacterDatabase.PExecute("DELETE FROM pet_spell WHERE guid = '%u'", petId);
+            CharacterDatabase.PExecute("DELETE FROM pet_spell_cooldown WHERE guid = '%u'", petId);
+        }
+        CharacterDatabase.CommitTransaction();
+        changed = true;
+    }
+
+    if (activePetIds.empty())
+    {
+        if (m_temporaryUnsummonedPetNumber)
+        {
+            m_temporaryUnsummonedPetNumber = 0;
+            changed = true;
+        }
+        return changed;
+    }
+
+    if (!preferredPetId)
+        preferredPetId = activePetIds.front();
+
+    bool shouldNormalizeSlots = activePetIds.size() > 1;
+    if (activePetIds.size() == 1 && !hasCurrentSlot && !hasDismissedSlot)
+        shouldNormalizeSlots = true;
+
+    if (shouldNormalizeSlots)
+    {
+        DEBUG_LOG("Player::NormalizeHunterPetState: player '%s' (%u) normalizing hunter pet slots, preferred pet %u, active count %u, hasCurrentSlot %u, hasDismissedSlot %u.",
+            GetName(), GetGUIDLow(), preferredPetId, uint32(activePetIds.size()), hasCurrentSlot ? 1 : 0, hasDismissedSlot ? 1 : 0);
+        CharacterDatabase.BeginTransaction();
+        CharacterDatabase.PExecute("UPDATE character_pet SET slot = '%u' WHERE owner = '%u' AND id = '%u'",
+            uint32(PET_SAVE_AS_CURRENT), GetGUIDLow(), preferredPetId);
+        CharacterDatabase.PExecute("UPDATE character_pet SET slot = '%u' WHERE owner = '%u' AND id <> '%u' AND (slot = '%u' OR slot > '%u')",
+            uint32(PET_SAVE_NOT_IN_SLOT), GetGUIDLow(), preferredPetId, uint32(PET_SAVE_AS_CURRENT), uint32(PET_SAVE_LAST_STABLE_SLOT));
+        CharacterDatabase.CommitTransaction();
+        changed = true;
+    }
+
+    if (m_temporaryUnsummonedPetNumber && !GetPetGuid())
+    {
+        if (activePetIds.size() == 1 && m_temporaryUnsummonedPetNumber == preferredPetId)
+        {
+            // valid temporary pet state
+        }
+        else
+        {
+            DEBUG_LOG("Player::NormalizeHunterPetState: player '%s' (%u) clearing mismatched temporary pet %u, preferred pet %u, active count %u.",
+                GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber, preferredPetId, uint32(activePetIds.size()));
+            m_temporaryUnsummonedPetNumber = 0;
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
+bool Player::TryResummonStoredHunterPet(bool preferTemporaryPet /*= true*/)
+{
+    if (getClass() != CLASS_HUNTER || GetPetGuid())
+        return false;
+
+    NormalizeHunterPetState();
+
+    Position spawnPos;
+    Pet* newPet = nullptr;
+
+    if (preferTemporaryPet && m_temporaryUnsummonedPetNumber)
+    {
+        newPet = new Pet;
+        spawnPos = newPet->GetPetSpawnPosition(this);
+        DEBUG_LOG("Player::TryResummonStoredHunterPet: player '%s' (%u) trying temporary pet %u.",
+            GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber);
+
+        if (!newPet->LoadPetFromDB(this, spawnPos, 0, m_temporaryUnsummonedPetNumber, true))
+        {
+            DEBUG_LOG("Player::TryResummonStoredHunterPet: player '%s' (%u) failed to load temporary pet %u, falling back to stored pet search.",
+                GetName(), GetGUIDLow(), m_temporaryUnsummonedPetNumber);
+            delete newPet;
+            newPet = nullptr;
+            m_temporaryUnsummonedPetNumber = 0;
+        }
+    }
+
+    if (!newPet)
+    {
+        newPet = new Pet;
+        spawnPos = newPet->GetPetSpawnPosition(this);
+        if (!newPet->LoadPetFromDB(this, spawnPos))
+        {
+            delete newPet;
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool Player::IsPetNeedBeTemporaryUnsummoned(Pet* pet) const
@@ -21602,6 +21785,8 @@ bool Player::IsPetNeedBeTemporaryUnsummoned(Pet* pet) const
 
 void Player::ResummonPetTemporaryUnSummonedIfAny()
 {
+    NormalizeHunterPetState();
+
     if (!m_temporaryUnsummonedPetNumber)
         return;
 
@@ -21612,10 +21797,13 @@ void Player::ResummonPetTemporaryUnSummonedIfAny()
     if (GetPetGuid())
         return;
 
-    Pet* NewPet = new Pet;
-    if (!NewPet->LoadPetFromDB(this, NewPet->GetPetSpawnPosition(this), 0, m_temporaryUnsummonedPetNumber, true))
-        delete NewPet;
-
+    uint32 petNumber = m_temporaryUnsummonedPetNumber;
+    DEBUG_LOG("Player::ResummonPetTemporaryUnSummonedIfAny: player '%s' (%u) attempting to restore temporary pet %u.",
+        GetName(), GetGUIDLow(), petNumber);
+    bool loaded = TryResummonStoredHunterPet(true);
+    if (!loaded)
+        DEBUG_LOG("Player::ResummonPetTemporaryUnSummonedIfAny: player '%s' (%u) failed to restore temporary pet %u.",
+            GetName(), GetGUIDLow(), petNumber);
     m_temporaryUnsummonedPetNumber = 0;
 }
 

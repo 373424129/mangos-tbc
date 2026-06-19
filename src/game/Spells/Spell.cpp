@@ -5528,6 +5528,8 @@ SpellCastResult Spell::CheckCast(bool strict)
                     return SPELL_FAILED_DONT_REPORT;
                 }
 
+                plrCaster->NormalizeHunterPetState();
+
                 if (plrCaster->GetPetGuid() || plrCaster->HasCharm())
                 {
                     plrCaster->SendPetTameFailure(PETTAME_ANOTHERSUMMONACTIVE);

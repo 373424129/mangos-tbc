@@ -4905,8 +4905,6 @@ void Spell::EffectTameCreature(SpellEffectIndex /*eff_idx*/)
     if (plr->IsPvP())
         pet->SetPvP(true);
 
-    pet->GetCharmInfo()->SetPetNumber(pet->GetObjectGuid().GetEntry(), true);
-
     uint32 level = creatureTarget->GetLevel();
     pet->SetCanModifyStats(true);
     pet->InitStatsForLevel(level);
@@ -4945,10 +4943,14 @@ void Spell::EffectTameCreature(SpellEffectIndex /*eff_idx*/)
     // caster have pet now
     plr->SetPet(pet);
 
+    sLog.outString("Spell::EffectTameCreature: player '%s' (%u) created hunter pet guidLow %u petNumber %u entry %u createdBySpell %u controlled %u ownerPetGuidLow %u.",
+        plr->GetName(), plr->GetGUIDLow(), pet->GetGUIDLow(), pet->GetCharmInfo() ? pet->GetCharmInfo()->GetPetNumber() : 0,
+        pet->GetEntry(), pet->GetCreatedBySpellId(), pet->isControlled() ? 1 : 0, plr->GetPetGuid().GetCounter());
+
     plr->PetSpellInitialize();
     pet->SetLoading(false);
 
-    if (isTrainingTameSpell(m_spellInfo->Id) || pet->GetCreatedBySpellId() == 13481)
+    if (isTrainingTameSpell(m_spellInfo->Id))
     {
         sLog.outDebug("Skipping hunter pet persistence for training tame spell %u, player '%s', pet entry %u.",
             m_spellInfo->Id, plr->GetName(), pet->GetEntry());
@@ -4976,10 +4978,14 @@ void Spell::EffectSummonPet(SpellEffectIndex eff_idx)
         {
             case CLASS_HUNTER:
             {
-                if (NewSummon->LoadPetFromDB(_player, spawnPos))
+                if (_player->TryResummonStoredHunterPet(true))
                 {
-                    OnSummon(NewSummon);
-                    m_spellLog.AddLog(uint32(SPELL_EFFECT_SUMMON_PET), NewSummon->GetPackGUID());
+                    delete NewSummon;
+                    if (Pet* summonedPet = _player->GetPet())
+                    {
+                        m_spellLog.AddLog(uint32(SPELL_EFFECT_SUMMON_PET), summonedPet->GetPackGUID());
+                        m_spellLog.SendToSet();
+                    }
                 }
                 else
                     delete NewSummon;
@@ -7270,6 +7276,16 @@ void Spell::EffectDismissPet(SpellEffectIndex /*eff_idx*/)
     m_spellLog.AddLog(uint32(SPELL_EFFECT_DISMISS_PET), pet->GetPackGUID());
     // send log now before remove it from map to avoid "unknown" name
     m_spellLog.SendToSet();
+
+    if (Player* player = static_cast<Player*>(m_caster))
+    {
+        uint32 petNumber = pet->GetCharmInfo() ? pet->GetCharmInfo()->GetPetNumber() : 0;
+        sLog.outString("Spell::EffectDismissPet: player '%s' (%u) dismissing pet guidLow %u petNumber %u entry %u createdBySpell %u controlled %u ownerPetGuidLow %u temporary pet before dismiss %u.",
+            player->GetName(), player->GetGUIDLow(), pet->GetGUIDLow(), petNumber, pet->GetEntry(), pet->GetCreatedBySpellId(),
+            pet->isControlled() ? 1 : 0, player->GetPetGuid().GetCounter(), player->GetTemporaryUnsummonedPetNumber());
+        if (petNumber && player->GetTemporaryUnsummonedPetNumber() == petNumber)
+            player->SetTemporaryUnsummonedPetNumber(0);
+    }
 
     pet->Unsummon(PET_SAVE_NOT_IN_SLOT, m_caster);
 }
