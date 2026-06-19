@@ -303,12 +303,10 @@ std::vector<std::tuple<SpellEntry const*, Unit*, bool>> PetAI::PickSpellWithTarg
         }
     }
 
+    // Charmed creatures can reuse PetAI for command/follow behavior without being actual Pet instances.
+    // In that case, skip pet-specific autocast handling quietly.
     if (!m_pet)
-    {
-        sLog.outError("PetAI::PickSpellWithTarget: creature guid %u entry %u createdBySpell %u has PetAI without Pet instance, skipping AI update.",
-            m_creature->GetGUIDLow(), m_creature->GetEntry(), m_creature->GetCreatedBySpellId());
         return nonblockingSpells;
-    }
 
     uint32 creatureEntry = m_pet->getPetType() == HUNTER_PET ? 1 : m_creature->GetCreatureInfo()->Entry;
     // Cast a spell from autocast selection
